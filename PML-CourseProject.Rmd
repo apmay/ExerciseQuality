@@ -1,0 +1,100 @@
+---
+title: "PML: Course Project"
+author: "apmay"
+date: "December 26, 2015"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+## Introduction
+
+The purpose of this work is to train a machine learning algorithm on a set of data and then be able to make further predictions about similar data not contained in the original data set. For this project, the data set contains measurements from six accelerometers worn by participants as they performed barbell lifts correctly and incorrectly in five different ways. After training the algorithm the goal is to assign the correct classification to how barbells were lifted in an unlabeled validation set with 20 groups of measurements. More information is available from <http://groupware.les.inf.puc-rio.br/har>.
+
+## Data Processing
+
+For data partitioning, training, and predicting the caret package will be used. The rattle package will be used for visualization. A seed is set for reproducibility purposes.
+
+```{r, results="hide"}
+library(caret)
+library(rattle)
+library(rpart)
+library(randomForest)
+set.seed(351)
+```
+
+The data is provided in two CSV files. The pml-training set contains data with the classifications provided while the pml-testing set contains the 20 unclassified groups of data that are to be predicted. We will split the pml-training data into a training set (60%) and a testing set (40%). The unlabeled pml-testing data will then be used for the final prediction/validation.
+
+```{r}
+pml.training <- read.csv("pml-training.csv")
+inTrain <- createDataPartition(y=pml.training$classe, p=.6, list = FALSE)
+training <- pml.training[inTrain,]
+testing <- pml.training[-inTrain,]
+
+pml.testing <- read.csv("pml-testing.csv")
+validation <- pml.testing
+```
+
+For preprocessing the data there are a few steps that must be carried out. First, there are quite a few variables which have near zero variance. These types of variables can cause models to become unstable or crash, so we remove them. Second, there are also quite a few variables that contain mostly NA's. Using too many of these variables may cause the models to become biased to cases when the variables either are or are not NA. Variables that are more than 75% NA are removed as well. Finally, we are interested in predicting the activity class based on the accelerometer data, not by participant, ID, date, etc. Therefore, the columns with this type of data (1-5) are also removed.
+
+```{r}
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing <- testing[, -nzv]
+validation <- validation[, -nzv]
+
+threshNA <- sapply(training, function(x) mean(is.na(x)) > .75)
+training <- training[, threshNA == FALSE]
+testing <- testing[, threshNA == FALSE]
+validation <- validation[, threshNA == FALSE]
+
+training <- training[, -c(1:5)]
+testing <- testing[, -c(1:5)]
+validation <- validation[, -c(1:5)]
+```
+
+## Prediction with Decision Tree
+
+As a start, a simple "off-the-shelf" decision tree will be used to get a sense of the data and the ease of prediction. The model is trained to predict the training set's classification (classe) based on all the variables remaining after preprocessing. The model is then applied to the testing set, and a confusion matrix is created to compare the testing set's predictions to the actual activity classes.
+
+```{r}
+modelTree <- train(classe ~ ., method="rpart", data=training)
+fancyRpartPlot(modelTree$finalModel)
+treePredict <- predict(modelTree, newdata=testing)
+confusionMatrix(treePredict, testing$classe)
+```
+
+The accuracy here is 48.7%, leaving an out of sample error of approximately 51.3%. This is fair for such a simple model, but it highlights certain splits that are not coming very clean. This could likely be improved with increasing tree complexity. However, complex trees start to lose interpretability and there are other methods that can typically improve accuracy even further.
+
+## Prediction with Random Forests
+
+In an attempt for further model accuracy, we now employ a random forest model. The method is set to cross-validation with four folds to balance computational cost and model performance. The model is again fit with the training set and then applied on the testing set to compare test set predictions to the actual classes.
+
+```{r}
+trainFolds = trainControl(method="cv", number=4)
+modelForest <- train(classe ~ ., method="rf", trControl = trainFolds, data=training)
+forestPredict <- predict(modelForest, newdata=testing)
+confusionMatrix(forestPredict, testing$classe)
+```
+
+Here the accuracy is 99.6%, leaving an out of sample error estimate of only 0.4%.
+
+Random forests appear to be quite effective at classifying these activity cases. Therefore we will move forward with this type of model for predicting the validation set. The previously created model (modelForest) is likely built upon enough data to classify the validation set appropriately, but we could also retrain the model with all available data instead of just a portion, knowing that the training and testing sets did not appear to be significantly different. The accuracy and out of sample error for this method should be similar to modelForest, or slightly improved if the original training set was noticeably less representative.
+
+```{r}
+finalData <- rbind(training,testing)
+finalModel <- train(classe ~ ., method="rf", trControl = trainFolds, data=finalData)
+finalPredict <- predict(finalModel, newdata=validation)
+finalPredict
+```
+
+## Results and Conclusion
+
+The simple decision tree showed fair results, and provided a simple visual and interpretable model for how the data could be used to predict the activity classes. This was valuable for a first understanding of the data, but the performance was insufficient for our classification purposes. A random forest model showed great improvement over the decision tree, providing sufficient accuracy to correctly classify the entire validation set.
+
+
+
+
+
+
+
